@@ -1,0 +1,1093 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agamy Invaders</title>
+      <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#000000f1">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+        
+        body {
+            font-family: 'Orbitron', sans-serif;
+            background-color: #030308;
+            color: #ffffff;
+            margin: 0;
+            overflow: hidden;
+            user-select: none;
+        }
+
+        canvas {
+            display: block;
+            box-shadow: 0 0 50px rgba(0, 240, 255, 0.15);
+        }
+
+        .neon-text-cyan {
+            text-shadow: 0 0 8px rgba(0, 243, 255, 0.8), 0 0 20px rgba(0, 243, 255, 0.4);
+        }
+
+        .neon-text-pink {
+            text-shadow: 0 0 8px rgba(255, 0, 128, 0.8), 0 0 20px rgba(255, 0, 128, 0.4);
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen bg-slate-950 text-white overflow-hidden select-none">
+
+    <!-- Game Container -->
+    <div class="relative w-full h-screen max-w-[600px] max-h-[900px] flex flex-col items-center justify-center p-2">
+        
+        <!-- Game Canvas -->
+        <canvas id="gameCanvas" class="w-full h-full rounded-xl border border-cyan-500/30 bg-black"></canvas>
+
+        <!-- Overlay UI: Game Over / Start Screen -->
+        <div id="uiOverlay" class="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-md z-20 rounded-xl p-6 text-center">
+            <h1 class="text-4xl md:text-5xl font-black tracking-widest text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-sky-300 to-pink-500 mb-2 neon-text-cyan">
+                AGAMY INVADERS
+            </h1>
+            <p class="text-slate-400 text-sm mb-8 tracking-wider">NEON ARCADE SHMUP</p>
+
+            <div class="bg-slate-900/80 border border-slate-700/50 p-4 rounded-lg mb-8 max-w-xs text-left text-xs text-slate-300 space-y-2">
+                <div class="flex justify-between"><span>MOVE:</span> <span class="text-cyan-400 font-bold">WASD / ARROWS</span></div>
+                <div class="flex justify-between"><span>FIRE:</span> <span class="text-cyan-400 font-bold">SPACE / HOLD CLICK</span></div>
+                <div class="flex justify-between"><span>UPGRADES:</span> <span class="text-pink-400 font-bold">COLLECT POWERUPS</span></div>
+            </div>
+
+            <button id="startButton" class="px-8 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-black tracking-wider text-lg rounded-full shadow-lg shadow-cyan-500/50 hover:shadow-cyan-400/80 transform hover:scale-105 transition-all duration-200">
+                START GAME
+            </button>
+        </div>
+    </div>
+
+<script>
+(() => {
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const uiOverlay = document.getElementById('uiOverlay');
+    const startButton = document.getElementById('startButton');
+
+    // Constants
+    const TAU = Math.PI * 2;
+    const rand = (min, max) => Math.random() * (max - min) + min;
+
+    // Level Color Schemes
+    const LEVEL_COLORS = [
+        { scout: '#ff2a6d', heavy: '#ff0055', boss: '#ff0055', bullet: '#ff2a6d' }, // Level 1 (Pink / Red)
+        { scout: '#a855f7', heavy: '#7e22ce', boss: '#9333ea', bullet: '#c084fc' }, // Level 2 (Purple)
+        { scout: '#eab308', heavy: '#ca8a04', boss: '#d97706', bullet: '#fde047' }, // Level 3 (Yellow / Gold)
+        { scout: '#22c55e', heavy: '#15803d', boss: '#16a34a', bullet: '#4ade80' }, // Level 4 (Green)
+        { scout: '#f97316', heavy: '#c2410c', boss: '#ea580c', bullet: '#fb923c' }  // Level 5 (Orange)
+    ];
+
+    function getLevelColors(lvl) {
+        return LEVEL_COLORS[(lvl - 1) % LEVEL_COLORS.length];
+    }
+
+    // Responsive Canvas Resolution
+    let W = 500;
+    let H = 800;
+
+    function resizeCanvas() {
+        const rect = canvas.getBoundingClientRect();
+        canvas.width = W = rect.width || 500;
+        canvas.height = H = rect.height || 800;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // Game State Variables
+    let gameRunning = false;
+    let score = 0;
+    let bestScore = localStorage.getItem('ss_best_score') || 0;
+    let level = 1;
+    let wave = 1;
+    let shake = 0;
+    let keys = {};
+    let mouseTouch = { active: false, x: 0, y: 0 };
+
+    // Game Entities
+    let player;
+    let shurikens = [];
+    let enemyBullets = [];
+    let enemies = [];
+    let boss = null;
+    let particles = [];
+    let floaters = [];
+    let stars = [];
+    let planets = [];
+    let powerups = [];
+
+    // Detailed Solar System Planets Templates
+    const PLANET_TEMPLATES = [
+        { name: 'Mercury', radius: 24, colorStart: '#d1d1d1', colorEnd: '#3a3a3a', neonColor: '#00f3ff', glowBlur: 20, type: 'mercury' },
+        { name: 'Venus', radius: 32, colorStart: '#ffd580', colorEnd: '#995500', neonColor: '#ffaa00', glowBlur: 25, type: 'venus' },
+        { name: 'Earth', radius: 38, colorStart: '#4da6ff', colorEnd: '#002b80', neonColor: '#00e5ff', glowBlur: 30, type: 'earth' },
+        { name: 'Mars', radius: 28, colorStart: '#ff6633', colorEnd: '#661100', neonColor: '#ff2a6d', glowBlur: 25, type: 'mars' },
+        { name: 'Jupiter', radius: 60, colorStart: '#f0c27b', colorEnd: '#4b1200', neonColor: '#ffaa00', glowBlur: 35, type: 'jupiter' },
+        { name: 'Saturn', radius: 50, colorStart: '#fae19c', colorEnd: '#5c4308', neonColor: '#ffe066', glowBlur: 35, type: 'saturn' },
+        { name: 'Uranus', radius: 42, colorStart: '#70e0d6', colorEnd: '#0f4857', neonColor: '#00ffff', glowBlur: 30, type: 'uranus' }
+    ];
+
+    // Initialize Planets spread out evenly across the screen height
+    function initPlanets() {
+        planets = [];
+        const count = 4;
+        for (let i = 0; i < count; i++) {
+            const tmpl = PLANET_TEMPLATES[i % PLANET_TEMPLATES.length];
+            planets.push({
+                ...tmpl,
+                x: rand(tmpl.radius + 30, W - tmpl.radius - 30),
+                y: (H / count) * i + rand(-40, 40),
+                speed: rand(18, 35),
+                rot: rand(0, TAU),
+                rotSpeed: rand(0.005, 0.015),
+                templateIdx: i
+            });
+        }
+    }
+
+    // Initialize Stars Background
+    function initStars() {
+        stars = [];
+        for (let i = 0; i < 80; i++) {
+            stars.push({
+                x: rand(0, W),
+                y: rand(0, H),
+                size: rand(0.5, 2.5),
+                speed: rand(0.5, 3),
+                alpha: rand(0.2, 0.8),
+                color: Math.random() > 0.3 ? '#00f3ff' : '#ff007f'
+            });
+        }
+    }
+
+    // Reset / Start Game
+    function resetGame() {
+        score = 0;
+        level = 1;
+        wave = 1;
+        shake = 0;
+        shurikens = [];
+        enemyBullets = [];
+        enemies = [];
+        boss = null;
+        particles = [];
+        floaters = [];
+        powerups = [];
+
+        player = {
+            x: W * 0.5,
+            y: H - 90,
+            r: 20,
+            speed: 380,
+            shotLevel: 1,
+            fireTimer: 0,
+            fireRate: 0.14,
+            hp: 100,
+            maxHp: 100,
+            invulnerable: 0
+        };
+
+        initStars();
+        initPlanets();
+        spawnEnemy(true);
+        spawnEnemy(true);
+    }
+
+    // Particle Burst
+    function burst(x, y, color, count = 15, speedMax = 180) {
+        for (let i = 0; i < count; i++) {
+            const angle = rand(0, TAU);
+            const speed = rand(30, speedMax);
+            particles.push({
+                x: x,
+                y: y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed,
+                life: 1.0,
+                decay: rand(1.2, 2.5),
+                color: color,
+                size: rand(1.5, 4)
+            });
+        }
+    }
+
+    // Floating Text Warning/Score
+    function addFloater(x, y, text, color = '#ff6a9a', size = 22) {
+        floaters.push({
+            x: x,
+            y: y,
+            text: text,
+            color: color,
+            size: size,
+            life: 1.2,
+            maxLife: 1.2,
+            vy: -40
+        });
+    }
+
+    // Spawn Enemy Logic
+    function spawnEnemy(initial = false) {
+        if (enemies.length >= 14 || boss) return;
+
+        const colors = getLevelColors(level);
+        const kind = (!initial && (wave >= 3 || level > 1) && Math.random() < Math.min(0.35, 0.08 + wave * 0.025 + level * 0.03)) ? 'heavy' : 'scout';
+        const x = rand(45, W - 45);
+        const y = initial ? rand(80, 320) : rand(-120, -40);
+
+        enemies.push({
+            x: x,
+            y: y,
+            baseX: x,
+            vx: rand(-45, 45),
+            vy: rand(60, 110) + wave * 8 + (level - 1) * 15,
+            r: kind === 'heavy' ? 24 : 16,
+            hp: kind === 'heavy' ? (4 + (level - 1) * 2) : (1 + Math.floor((level - 1) * 0.5)),
+            maxHp: kind === 'heavy' ? (4 + (level - 1) * 2) : (1 + Math.floor((level - 1) * 0.5)),
+            kind: kind,
+            phase: rand(0, TAU),
+            fireTimer: rand(1.0, 2.5),
+            hit: 0,
+            rot: rand(0, TAU),
+            color: kind === 'heavy' ? colors.heavy : colors.scout
+        });
+    }
+
+    // Spawn Boss Logic
+    function spawnBoss() {
+        if (boss) return;
+        const colors = getLevelColors(level);
+        boss = {
+            x: W * 0.5,
+            y: 135,
+            r: 55,
+            hp: 35 + wave * 15 + (level - 1) * 25,
+            maxHp: 35 + wave * 15 + (level - 1) * 25,
+            phase: 0,
+            fireTimer: 0.6,
+            hit: 0,
+            targetX: W * 0.5,
+            color: colors.boss
+        };
+        addFloater(W * 0.5, 230, `LEVEL ${level} BOSS!`, colors.boss, 26);
+        burst(W * 0.5, 135, colors.boss, 40, 240);
+        shake = 12;
+    }
+
+    // Player Shooting Logic
+    function fireShuriken() {
+        const side = player.shotLevel >= 3 ? 2 : (player.shotLevel === 2 ? 1 : 0);
+        const offsets = side === 2 ? [-18, 0, 18] : (side === 1 ? [-10, 10] : [0]);
+
+        for (const off of offsets) {
+            const spread = off * 0.015;
+            shurikens.push({
+                x: player.x + off,
+                y: player.y - 15,
+                vx: spread * 180,
+                vy: -620,
+                rot: rand(0, TAU),
+                r: 10
+            });
+        }
+    }
+
+    // Input Handlers
+    window.addEventListener('keydown', (e) => { keys[e.code] = true; });
+    window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+    const handlePointer = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        mouseTouch.x = e.clientX - rect.left;
+        mouseTouch.y = e.clientY - rect.top;
+    };
+
+    canvas.addEventListener('mousedown', (e) => { mouseTouch.active = true; handlePointer(e); });
+    canvas.addEventListener('mousemove', (e) => { if (mouseTouch.active) handlePointer(e); });
+    window.addEventListener('mouseup', () => { mouseTouch.active = false; });
+
+    canvas.addEventListener('touchstart', (e) => {
+        mouseTouch.active = true;
+        if (e.touches[0]) handlePointer(e.touches[0]);
+    });
+    canvas.addEventListener('touchmove', (e) => {
+        if (e.touches[0]) handlePointer(e.touches[0]);
+    });
+    canvas.addEventListener('touchend', () => { mouseTouch.active = false; });
+
+    // Update Logic Loop
+    let lastTime = performance.now();
+
+    function update(dt) {
+        if (!gameRunning) return;
+
+        // Decrease screen shake
+        if (shake > 0) shake -= dt * 30;
+
+        // Stars Background Animation
+        stars.forEach(s => {
+            s.y += s.speed * (1 + (boss ? 0.3 : 0));
+            if (s.y > H) {
+                s.y = 0;
+                s.x = rand(0, W);
+            }
+        });
+
+        // Planets Background Movement & Rotation Loop
+        planets.forEach(p => {
+            p.y += p.speed * dt;
+            p.rot += p.rotSpeed;
+
+            if (p.y - p.radius * 2.5 > H) {
+                p.y = -p.radius * 2.5 - rand(20, 100);
+                p.x = rand(p.radius + 30, W - p.radius - 30);
+                
+                // Cycle to a new random template for variety
+                p.templateIdx = (p.templateIdx + 1) % PLANET_TEMPLATES.length;
+                const nextTmpl = PLANET_TEMPLATES[p.templateIdx];
+                Object.assign(p, nextTmpl);
+                p.speed = rand(18, 35);
+            }
+        });
+
+        // Player Movement
+        let dx = 0;
+        let dy = 0;
+
+        if (keys['KeyA'] || keys['ArrowLeft']) dx -= 1;
+        if (keys['KeyD'] || keys['ArrowRight']) dx += 1;
+        if (keys['KeyW'] || keys['ArrowUp']) dy -= 1;
+        if (keys['KeyS'] || keys['ArrowDown']) dy += 1;
+
+        if (dx !== 0 && dy !== 0) {
+            dx *= 0.7071;
+            dy *= 0.7071;
+        }
+
+        player.x += dx * player.speed * dt;
+        player.y += dy * player.speed * dt;
+
+        // Mouse/Touch Direct Drag Control smooth interpolation
+        if (mouseTouch.active) {
+            player.x += (mouseTouch.x - player.x) * 0.2;
+            player.y += (mouseTouch.y - 40 - player.y) * 0.2;
+        }
+
+        // Keep player in bounds
+        player.x = Math.max(player.r, Math.min(W - player.r, player.x));
+        player.y = Math.max(player.r + 40, Math.min(H - player.r, player.y));
+
+        // Player Firing
+        player.fireTimer -= dt;
+        const autoFire = keys['Space'] || mouseTouch.active || keys['KeyZ'];
+        if (autoFire && player.fireTimer <= 0) {
+            fireShuriken();
+            player.fireTimer = player.fireRate;
+        }
+
+        if (player.invulnerable > 0) player.invulnerable -= dt;
+
+        // Update Player Shurikens
+        for (let i = shurikens.length - 1; i >= 0; i--) {
+            const s = shurikens[i];
+            s.x += s.vx * dt;
+            s.y += s.vy * dt;
+            s.rot += 18 * dt; // Rapid shuriken spin
+
+            if (s.y < -30 || s.x < -30 || s.x > W + 30) {
+                shurikens.splice(i, 1);
+            }
+        }
+
+        // Wave & Enemy Spawning Logic
+        if (!boss) {
+            if (Math.random() < dt * (1.5 + level * 0.2)) spawnEnemy();
+
+            // Wave Boss Trigger
+            if (score >= (level * 500 + wave * 300) && !boss) {
+                spawnBoss();
+            }
+        }
+
+        const colors = getLevelColors(level);
+
+        // Update Enemies
+        for (let i = enemies.length - 1; i >= 0; i--) {
+            const e = enemies[i];
+            e.phase += dt * 2;
+            e.x = e.baseX + Math.sin(e.phase) * 40;
+            e.y += e.vy * dt;
+            e.rot += dt * (e.kind === 'heavy' ? 1.5 : 3);
+            if (e.hit > 0) e.hit -= dt * 5;
+
+            // Enemy Firing
+            e.fireTimer -= dt;
+            if (e.fireTimer <= 0 && e.y > 0 && e.y < H - 150) {
+                enemyBullets.push({
+                    x: e.x,
+                    y: e.y + e.r,
+                    vx: rand(-20, 20),
+                    vy: rand(180, 260) + level * 10,
+                    r: 4,
+                    color: colors.bullet
+                });
+                e.fireTimer = rand(1.8, 3.2) / (1 + level * 0.1);
+            }
+
+            // Remove enemy if past screen
+            if (e.y > H + 50) {
+                enemies.splice(i, 1);
+            }
+        }
+
+        // Update Boss
+        if (boss) {
+            boss.phase += dt * 1.5;
+            boss.x = W * 0.5 + Math.sin(boss.phase) * (W * 0.35);
+            if (boss.hit > 0) boss.hit -= dt * 5;
+
+            // Boss Firing Bullet Patterns
+            boss.fireTimer -= dt;
+            if (boss.fireTimer <= 0) {
+                // Triple/Spread Bullet burst
+                for (let a = -0.5; a <= 0.5; a += 0.25) {
+                    enemyBullets.push({
+                        x: boss.x,
+                        y: boss.y + 35,
+                        vx: Math.sin(a) * (160 + level * 15),
+                        vy: Math.cos(a) * (220 + level * 15),
+                        r: 5,
+                        color: colors.bullet
+                    });
+                }
+                boss.fireTimer = Math.max(0.3, 1.2 - wave * 0.1 - level * 0.05);
+            }
+        }
+
+        // Update Enemy Bullets
+        for (let i = enemyBullets.length - 1; i >= 0; i--) {
+            const b = enemyBullets[i];
+            b.x += b.vx * dt;
+            b.y += b.vy * dt;
+
+            // Collision with Player
+            const distP = Math.hypot(b.x - player.x, b.y - player.y);
+            if (distP < b.r + player.r && player.invulnerable <= 0) {
+                player.hp -= 15;
+                player.invulnerable = 0.8;
+                shake = 8;
+                burst(player.x, player.y, '#00f3ff', 12);
+                enemyBullets.splice(i, 1);
+
+                if (player.hp <= 0) {
+                    gameOver();
+                }
+                continue;
+            }
+
+            if (b.y > H + 20 || b.x < -20 || b.x > W + 20) {
+                enemyBullets.splice(i, 1);
+            }
+        }
+
+        // Update Powerups
+        for (let i = powerups.length - 1; i >= 0; i--) {
+            const p = powerups[i];
+            p.y += p.vy * dt;
+            p.rot += dt * 2;
+
+            // Player pickup
+            if (Math.hypot(p.x - player.x, p.y - player.y) < p.r + player.r) {
+                player.shotLevel = Math.min(3, player.shotLevel + 1);
+                score += 50;
+                addFloater(p.x, p.y, 'WEAPON UPGRADE!', '#00ffaa', 18);
+                burst(p.x, p.y, '#00ffaa', 15);
+                powerups.splice(i, 1);
+                continue;
+            }
+
+            if (p.y > H + 30) powerups.splice(i, 1);
+        }
+
+        // Collisions: Player Shurikens vs Enemies
+        for (let sIdx = shurikens.length - 1; sIdx >= 0; sIdx--) {
+            const s = shurikens[sIdx];
+            let shurikenHit = false;
+
+            // Hits Boss
+            if (boss) {
+                if (Math.hypot(s.x - boss.x, s.y - boss.y) < s.r + boss.r) {
+                    boss.hp -= 1;
+                    boss.hit = 1;
+                    shurikenHit = true;
+                    burst(s.x, s.y, boss.color, 4, 90);
+
+                    if (boss.hp <= 0) {
+                        score += 500 + wave * 100 + level * 200;
+                        burst(boss.x, boss.y, boss.color, 60, 260);
+                        addFloater(boss.x, boss.y, `LEVEL ${level} CLEAR!`, boss.color, 24);
+                        
+                        // Advance Level
+                        boss = null;
+                        enemies = [];
+                        enemyBullets = [];
+                        level++;
+                        wave++;
+                        shake = 15;
+
+                        // Announce New Level
+                        setTimeout(() => {
+                            const newColors = getLevelColors(level);
+                            addFloater(W * 0.5, H * 0.4, `LEVEL ${level}`, newColors.scout, 32);
+                        }, 500);
+                    }
+                }
+            }
+
+            if (shurikenHit) {
+                shurikens.splice(sIdx, 1);
+                continue;
+            }
+
+            // Hits Regular Enemies
+            for (let eIdx = enemies.length - 1; eIdx >= 0; eIdx--) {
+                const e = enemies[eIdx];
+                if (Math.hypot(s.x - e.x, s.y - e.y) < s.r + e.r) {
+                    e.hp -= 1;
+                    e.hit = 1;
+                    shurikenHit = true;
+                    burst(s.x, s.y, '#00f3ff', 5, 100);
+
+                    if (e.hp <= 0) {
+                        score += e.kind === 'heavy' ? 40 : 15;
+                        burst(e.x, e.y, e.color, 18, 160);
+
+                        // Drop Weapon Powerup chance
+                        if (Math.random() < 0.15) {
+                            powerups.push({ x: e.x, y: e.y, vy: 90, r: 12, rot: 0 });
+                        }
+
+                        enemies.splice(eIdx, 1);
+                    }
+                    break;
+                }
+            }
+
+            if (shurikenHit) {
+                shurikens.splice(sIdx, 1);
+            }
+        }
+
+        // Collisions: Player vs Enemies
+        for (let eIdx = enemies.length - 1; eIdx >= 0; eIdx--) {
+            const e = enemies[eIdx];
+            if (Math.hypot(player.x - e.x, player.y - e.y) < player.r + e.r && player.invulnerable <= 0) {
+                player.hp -= 25;
+                player.invulnerable = 1.0;
+                shake = 10;
+                burst(e.x, e.y, e.color, 20);
+                enemies.splice(eIdx, 1);
+
+                if (player.hp <= 0) gameOver();
+            }
+        }
+
+        // Particles Life Update
+        for (let i = particles.length - 1; i >= 0; i--) {
+            const p = particles[i];
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.life -= p.decay * dt;
+            if (p.life <= 0) particles.splice(i, 1);
+        }
+
+        // Floaters Life Update
+        for (let i = floaters.length - 1; i >= 0; i--) {
+            const f = floaters[i];
+            f.y += f.vy * dt;
+            f.life -= dt;
+            if (f.life <= 0) floaters.splice(i, 1);
+        }
+    }
+
+    // --- DRAWING / RENDERING SECTION ---
+
+    // Draw Realistic 3D Neon Spherical Planets
+    function drawPlanet(p) {
+        if (p.y + p.radius * 2.5 < 0 || p.y - p.radius * 2.5 > H) return;
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+
+        // Outer Neon Glow Effect
+        ctx.shadowColor = p.neonColor;
+        ctx.shadowBlur = p.glowBlur;
+
+        // Render Rings for Saturn & Uranus
+        if (p.type === 'saturn' || p.type === 'uranus') {
+            ctx.save();
+            ctx.rotate(0.35 + p.rot * 0.1);
+            ctx.scale(1, 0.32);
+            ctx.beginPath();
+            ctx.arc(0, 0, p.radius * 2.0, 0, TAU);
+            ctx.strokeStyle = p.type === 'saturn' ? 'rgba(255, 215, 120, 0.75)' : 'rgba(0, 255, 255, 0.65)';
+            ctx.lineWidth = p.radius * 0.45;
+            ctx.stroke();
+
+            // Inner Ring Accent
+            ctx.beginPath();
+            ctx.arc(0, 0, p.radius * 1.5, 0, TAU);
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        // 3D Spherical Radial Gradient
+        const lightX = -p.radius * 0.35;
+        const lightY = -p.radius * 0.35;
+        const grad = ctx.createRadialGradient(lightX, lightY, p.radius * 0.08, 0, 0, p.radius);
+        grad.addColorStop(0, '#ffffff');
+        grad.addColorStop(0.2, p.colorStart);
+        grad.addColorStop(0.75, p.colorEnd);
+        grad.addColorStop(1, '#050510');
+
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius, 0, TAU);
+        ctx.fill();
+
+        // Specific Planet Surface Visual Features
+        ctx.save();
+        ctx.rotate(p.rot);
+        ctx.clip(); // Restrict surface details to planet sphere
+
+        if (p.type === 'earth') {
+            // Earth Landmasses
+            ctx.fillStyle = 'rgba(34, 139, 34, 0.85)';
+            ctx.beginPath();
+            ctx.arc(-p.radius * 0.2, -p.radius * 0.15, p.radius * 0.5, 0, TAU);
+            ctx.arc(p.radius * 0.35, p.radius * 0.4, p.radius * 0.4, 0, TAU);
+            ctx.arc(-p.radius * 0.4, p.radius * 0.5, p.radius * 0.3, 0, TAU);
+            ctx.fill();
+
+            // White Cloud Swirls
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+            ctx.beginPath();
+            ctx.arc(p.radius * 0.1, -p.radius * 0.4, p.radius * 0.35, 0, TAU);
+            ctx.arc(-p.radius * 0.3, p.radius * 0.2, p.radius * 0.3, 0, TAU);
+            ctx.fill();
+        } else if (p.type === 'jupiter') {
+            // Jupiter Atmosphere Bands
+            ctx.fillStyle = 'rgba(139, 69, 19, 0.45)';
+            ctx.fillRect(-p.radius, -p.radius * 0.4, p.radius * 2, p.radius * 0.22);
+            ctx.fillRect(-p.radius, p.radius * 0.1, p.radius * 2, p.radius * 0.28);
+
+            // Great Red Spot
+            ctx.fillStyle = '#cc2200';
+            ctx.beginPath();
+            ctx.ellipse(p.radius * 0.3, p.radius * 0.25, p.radius * 0.28, p.radius * 0.18, 0, 0, TAU);
+            ctx.fill();
+        } else if (p.type === 'mars') {
+            // Mars Craters / Ice Caps
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+            ctx.beginPath();
+            ctx.arc(0, -p.radius * 0.75, p.radius * 0.25, 0, TAU);
+            ctx.fill();
+
+            ctx.fillStyle = 'rgba(80, 0, 0, 0.4)';
+            ctx.beginPath();
+            ctx.arc(-p.radius * 0.3, p.radius * 0.2, p.radius * 0.2, 0, TAU);
+            ctx.arc(p.radius * 0.2, -p.radius * 0.1, p.radius * 0.15, 0, TAU);
+            ctx.fill();
+        }
+        ctx.restore();
+
+        // Vibrant Neon Rim/Atmosphere Outline
+        ctx.strokeStyle = p.neonColor;
+        ctx.lineWidth = 2.5;
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        ctx.arc(0, 0, p.radius, 0, TAU);
+        ctx.stroke();
+
+        ctx.restore();
+    }
+
+    // Draw Shuriken (Player Projectile)
+    function drawShuriken(x, y, r, rot) {
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(rot);
+
+        ctx.shadowColor = '#00f3ff';
+        ctx.shadowBlur = 12;
+        ctx.strokeStyle = '#00f3ff';
+        ctx.fillStyle = '#ffffff';
+        ctx.lineWidth = 2;
+
+        ctx.beginPath();
+        const blades = 4;
+        for (let i = 0; i < blades * 2; i++) {
+            const radius = i % 2 === 0 ? r : r * 0.35;
+            const angle = (i * Math.PI) / blades;
+            const px = Math.cos(angle) * radius;
+            const py = Math.sin(angle) * radius;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.restore();
+    }
+
+    // Render Function
+    function render() {
+        ctx.save();
+
+        // Screen Shake Apply
+        if (shake > 0) {
+            const sx = rand(-shake, shake);
+            const sy = rand(-shake, shake);
+            ctx.translate(sx, sy);
+        }
+
+        // Clear Canvas
+        ctx.fillStyle = '#03030b';
+        ctx.fillRect(0, 0, W, H);
+
+        // Draw Stars Background
+        stars.forEach(s => {
+            ctx.fillStyle = s.color;
+            ctx.globalAlpha = s.alpha;
+            ctx.beginPath();
+            ctx.arc(s.x, s.y, s.size, 0, TAU);
+            ctx.fill();
+        });
+        ctx.globalAlpha = 1.0;
+
+        // Draw 3D Neon Planets Background
+        planets.forEach(p => drawPlanet(p));
+
+        // Draw Powerups
+        powerups.forEach(p => {
+            ctx.save();
+            ctx.translate(p.x, p.y);
+            ctx.rotate(p.rot);
+            ctx.shadowColor = '#00ffaa';
+            ctx.shadowBlur = 15;
+            ctx.strokeStyle = '#00ffaa';
+            ctx.fillStyle = '#00ffaa22';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.rect(-10, -10, 20, 20);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = '#00ffaa';
+            ctx.font = '900 12px Orbitron';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('P', 0, 0);
+            ctx.restore();
+        });
+
+        // Draw Player Shurikens
+        shurikens.forEach(s => {
+            drawShuriken(s.x, s.y, s.r, s.rot);
+        });
+
+        // Draw Enemy Bullets
+        enemyBullets.forEach(b => {
+            ctx.save();
+            ctx.shadowColor = b.color;
+            ctx.shadowBlur = 10;
+            ctx.fillStyle = b.color;
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, b.r, 0, TAU);
+            ctx.fill();
+            ctx.restore();
+        });
+
+        // Draw Enemies
+        enemies.forEach(e => {
+            ctx.save();
+            ctx.translate(e.x, e.y);
+
+            const isHeavy = e.kind === 'heavy';
+            const color = e.hit > 0 ? '#ffffff' : e.color;
+
+            ctx.shadowColor = color;
+            ctx.shadowBlur = isHeavy ? 16 : 10;
+            ctx.strokeStyle = color;
+            ctx.fillStyle = color + '33';
+            ctx.lineWidth = 2;
+
+            if (isHeavy) {
+                // Heavy Enemy (Hexagonal Vector Ship)
+                ctx.rotate(e.rot);
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const angle = (i * Math.PI) / 3;
+                    const px = Math.cos(angle) * e.r;
+                    const py = Math.sin(angle) * e.r;
+                    if (i === 0) ctx.moveTo(px, py);
+                    else ctx.lineTo(px, py);
+                }
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                // Inner core pattern
+                ctx.beginPath();
+                ctx.arc(0, 0, e.r * 0.4, 0, TAU);
+                ctx.stroke();
+            } else {
+                // Scout Enemy (Diamond/Spike Ship)
+                ctx.beginPath();
+                ctx.moveTo(0, e.r * 1.2);
+                ctx.lineTo(-e.r, -e.r * 0.8);
+                ctx.lineTo(0, -e.r * 0.3);
+                ctx.lineTo(e.r, -e.r * 0.8);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        });
+
+        // Draw Boss
+        if (boss) {
+            ctx.save();
+            ctx.translate(boss.x, boss.y);
+
+            const bColor = boss.hit > 0 ? '#ffffff' : boss.color;
+            ctx.shadowColor = boss.color;
+            ctx.shadowBlur = 25;
+            ctx.strokeStyle = bColor;
+            ctx.fillStyle = '#1a000a';
+            ctx.lineWidth = 3;
+
+            // Complex Mechanical Boss Geometry
+            ctx.beginPath();
+            ctx.moveTo(0, 45);
+            ctx.lineTo(-40, 20);
+            ctx.lineTo(-65, -10);
+            ctx.lineTo(-50, -40);
+            ctx.lineTo(-20, -25);
+            ctx.lineTo(0, -45);
+            ctx.lineTo(20, -25);
+            ctx.lineTo(50, -40);
+            ctx.lineTo(65, -10);
+            ctx.lineTo(40, 20);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+
+            // Glowing Boss Eye Core
+            ctx.fillStyle = boss.color;
+            ctx.shadowBlur = 15;
+            ctx.beginPath();
+            ctx.arc(0, 0, 14, 0, TAU);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        // Draw Player Ship (Cyan Glowing Triangular Fighter)
+        if (gameRunning && player) {
+            ctx.save();
+            ctx.translate(player.x, player.y);
+
+            if (player.invulnerable <= 0 || Math.floor(Date.now() / 100) % 2 === 0) {
+                ctx.shadowColor = '#00f3ff';
+                ctx.shadowBlur = 20;
+                ctx.strokeStyle = '#00f3ff';
+                ctx.fillStyle = '#003344';
+                ctx.lineWidth = 2.5;
+
+                // Sleek Fighter Shape
+                ctx.beginPath();
+                ctx.moveTo(0, -player.r * 1.3);
+                ctx.lineTo(-player.r * 1.1, player.r * 0.9);
+                ctx.lineTo(-player.r * 0.4, player.r * 0.5);
+                ctx.lineTo(0, player.r * 0.7);
+                ctx.lineTo(player.r * 0.4, player.r * 0.5);
+                ctx.lineTo(player.r * 1.1, player.r * 0.9);
+                ctx.closePath();
+                ctx.fill();
+                ctx.stroke();
+
+                // Cyan Core Glow Line
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(0, -player.r * 0.8);
+                ctx.lineTo(0, player.r * 0.3);
+                ctx.stroke();
+            }
+
+            ctx.restore();
+        }
+
+        // Draw Explosion Particles
+        particles.forEach(p => {
+            ctx.save();
+            ctx.globalAlpha = p.life;
+            ctx.shadowColor = p.color;
+            ctx.shadowBlur = 10;
+            ctx.fillStyle = p.color;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, p.size, 0, TAU);
+            ctx.fill();
+            ctx.restore();
+        });
+
+        // Draw Floating Text (Warning / Score Floaters)
+        floaters.forEach(f => {
+            ctx.save();
+            ctx.globalAlpha = Math.min(1, f.life / f.maxLife);
+            ctx.font = `900 ${f.size}px Orbitron`;
+            ctx.fillStyle = f.color;
+            ctx.shadowColor = f.color;
+            ctx.shadowBlur = 12;
+            ctx.textAlign = 'center';
+            ctx.fillText(f.text, f.x, f.y);
+            ctx.restore();
+        });
+
+        // --- HUD / HEADER OVERLAYS ---
+
+        // 1. Boss HP Bar Top
+        if (boss) {
+            const barW = W * 0.65;
+            const barH = 14;
+            const barX = (W - barW) / 2;
+            const barY = 45;
+            const hpRatio = Math.max(0, boss.hp / boss.maxHp);
+
+            // Boss Title
+            ctx.font = '900 12px Orbitron';
+            ctx.fillStyle = boss.color;
+            ctx.textAlign = 'center';
+            ctx.shadowColor = boss.color;
+            ctx.shadowBlur = 8;
+            ctx.fillText(`ELITE SHIP - LEVEL ${level}`, W * 0.5, barY - 8);
+
+            // Bar Container Background
+            ctx.fillStyle = '#200510';
+            ctx.strokeStyle = boss.color;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.roundRect(barX, barY, barW, barH, 6);
+            ctx.fill();
+            ctx.stroke();
+
+            // Bar Fill Gradient
+            const grad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+            grad.addColorStop(0, '#ffffff');
+            grad.addColorStop(1, boss.color);
+            ctx.fillStyle = grad;
+            ctx.shadowColor = boss.color;
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.roundRect(barX + 2, barY + 2, Math.max(0, (barW - 4) * hpRatio), barH - 4, 4);
+            ctx.fill();
+        }
+
+        // 2. Score & Wave & Level Info Top Corner
+        ctx.save();
+        ctx.font = '700 12px Orbitron';
+        ctx.fillStyle = '#00f3ff';
+        ctx.shadowColor = '#00f3ff';
+        ctx.shadowBlur = 6;
+        ctx.textAlign = 'left';
+        ctx.fillText(`SCORE: ${score}`, 18, 28);
+        ctx.fillText(`LEVEL: ${level}`, 18, 44);
+
+        ctx.textAlign = 'right';
+        ctx.fillText(`BEST: ${bestScore}`, W - 18, 28);
+        ctx.fillText(`WAVE: ${wave}`, W - 18, 44);
+        ctx.restore();
+
+        // 3. Player Health Bar Bottom Left
+        if (player) {
+            const pBarW = 120;
+            const pBarH = 8;
+            const pBarX = 18;
+            const pBarY = H - 25;
+            const pHpRatio = Math.max(0, player.hp / player.maxHp);
+
+            ctx.fillStyle = '#002233';
+            ctx.strokeStyle = '#00f3ff';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(pBarX, pBarY, pBarW, pBarH);
+            ctx.fillRect(pBarX, pBarY, pBarW, pBarH);
+
+            ctx.fillStyle = '#00f3ff';
+            ctx.shadowColor = '#00f3ff';
+            ctx.shadowBlur = 8;
+            ctx.fillRect(pBarX, pBarY, pBarW * pHpRatio, pBarH);
+        }
+
+        // 4. Bottom Controls Helper Label
+        ctx.save();
+        ctx.font = '600 10px Orbitron';
+        ctx.fillStyle = 'rgba(0, 243, 255, 0.6)';
+        ctx.textAlign = 'center';
+        ctx.fillText('SPACE / HOLD FIRE  •  MOVE: WASD / ARROWS', W * 0.5, H - 15);
+        ctx.restore();
+
+        ctx.restore();
+    }
+
+    // Game Over Handler
+    function gameOver() {
+        gameRunning = false;
+        if (score > bestScore) {
+            bestScore = score;
+            localStorage.setItem('ss_best_score', bestScore);
+        }
+
+        uiOverlay.querySelector('h1').innerText = 'GAME OVER';
+        uiOverlay.querySelector('p').innerText = `FINAL SCORE: ${score} | LEVEL: ${level}`;
+        startButton.innerText = 'PLAY AGAIN';
+        uiOverlay.classList.remove('hidden');
+    }
+
+    // Loop Engine
+    function loop(now) {
+        const dt = Math.min(0.05, (now - lastTime) / 1000);
+        lastTime = now;
+
+        update(dt);
+        render();
+
+        requestAnimationFrame(loop);
+    }
+
+    // Start Button Event
+    startButton.addEventListener('click', () => {
+        uiOverlay.classList.add('hidden');
+        resetGame();
+        gameRunning = true;
+    });
+
+    // Initial render loop start
+    requestAnimationFrame(loop);
+})();
+</script>
+  <script>
+if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+        navigator.serviceWorker.register("service-worker.js");
+    });
+}
+</script>
+</body>
+</html>
